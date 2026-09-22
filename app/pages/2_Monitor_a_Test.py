@@ -1,0 +1,165 @@
+"""Monitoring-stage page: manual interim data entry -> continue/stop read.
+
+Manual entry because 120F doesn't currently have server-to-server credentials
+for Adobe Analytics (or Target) -- type in whatever numbers you're already
+pulling from your existing reports. When those credentials exist, this page
+is where an automated pull would slot in (replacing the data_editor with a
+"pull latest from Adobe" button) without changing anything in engine/.
+
+NOTHING ON THIS PAGE PERSISTS. There is no database or file behind it yet
+(by design, for now) -- refreshing the page, closing the tab, or the app
+restarting all lose whatever's in the table below. See the banner at the
+top: re-enter your data from your own records each time you come back.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
+
+from app._theme import apply_brand, eyebrow
+from engine.interim import ArmStats, Look, analyze
+
+st.set_page_config(page_title="Monitor a test -- 120F Sequential Testing", layout="wide")
+apply_brand()
+
+eyebrow("Step 2")
+st.title("Monitor a test")
+
+if "design_result" not in st.session_state:
+    st.warning("No design loaded yet. Go to **Design a test** first and compute a design -- "
+               "this page needs the boundaries and max sample size from that step.")
+    st.stop()
+
+design_result = st.session_state["design_result"]
+inputs = design_result.inputs
+variant_names = [f"Variant {chr(65 + i)}" for i in range(inputs.n_variants)]  # Variant A, B, C, ...
+
+st.error(
+    "**Nothing on this page is saved.** There's no storage behind this tool yet -- refreshing, "
+    "closing the tab, or the app restarting all lose the table below. Keep your own record of "
+    "cumulative numbers (e.g. in the Adobe/Target report you're pulling from) and re-enter them "
+    "here each time you check in on a test.",
+    icon="💾",
+)
+
+st.caption(
+    f"Comparing against: {inputs.metric_type} metric, baseline={inputs.baseline}, "
+    f"MDE={inputs.mde:+.0%} ({'relative' if inputs.mde_is_relative else 'absolute'}), "
+    f"family-wise alpha={inputs.alpha} ({inputs.sides}-sided), power={inputs.power}, "
+    f"{inputs.n_variants} variant(s), max N/arm={design_result.n_max_per_arm:,}."
+)
+
+st.markdown("#### Enter cumulative data at each look")
+st.caption(
+    "One row per check-in, in date order. Enter CUMULATIVE totals (not just this period's numbers) -- "
+    "e.g. row 3 should include everyone counted in rows 1 and 2 as well."
+)
+
+
+def _default_columns():
+    cols = {"Label": ["Look 1"], "Control N": [0]}
+    if inputs.metric_type == "binary":
+        cols["Control conversions"] = [0]
+    else:
+        cols["Control mean"] = [0.0]
+        cols["Control SD"] = [0.0]
+    for name in variant_names:
+        cols[f"{name} N"] = [0]
+        if inputs.metric_type == "binary":
+            cols[f"{name} conversions"] = [0]
+        else:
+            cols[f"{name} mean"] = [0.0]
+            cols[f"{name} SD"] = [0.0]
+    return pd.DataFrame(cols)
+
+
+default_df = _default_columns()
+# If a design change altered the expected columns (metric type or variant count), don't try to
+# reuse a stale table shape.
+prior = st.session_state.get("interim_df")
+if prior is None or set(prior.columns) != set(default_df.columns):
+    prior = default_df
+
+df = st.data_editor(prior, num_rows="dynamic", width="stretch", key="interim_editor")
+st.session_state["interim_df"] = df
+
+if st.button("Analyze", type="primary"):
+    rows = df.dropna(how="all")
+    looks = []
+    try:
+        for _, row in rows.iterrows():
+            if inputs.metric_type == "binary":
+                control = ArmStats(n=float(row["Control N"]), events=float(row["Control conversions"]))
+            else:
+                control = ArmStats(n=float(row["Control N"]), mean=float(row["Control mean"]), sd=float(row["Control SD"]))
+            if control.n <= 0:
+                continue
+            variants = {}
+            for name in variant_names:
+                if inputs.metric_type == "binary":
+                    variants[name] = ArmStats(n=float(row[f"{name} N"]), events=float(row[f"{name} conversions"]))
+                else:
+                    variants[name] = ArmStats(n=float(row[f"{name} N"]), mean=float(row[f"{name} mean"]),
+                                               sd=float(row[f"{name} SD"]))
+            looks.append(Look(control=control, variants=variants, label=str(row.get("Label", ""))))
+    except (KeyError, ValueError) as e:
+        st.error(f"Couldn't read the data table: {e}")
+        st.stop()
+
+    looks = [lk for lk in looks if all(v.n > 0 for v in lk.variants.values())]
+    if not looks:
+        st.warning("Enter at least one look with N > 0 for the control and every variant.")
+        st.stop()
+
+    try:
+        results = analyze(design_result, looks)
+    except Exception as e:
+        st.error(f"Couldn't analyze these looks: {e}")
+        st.stop()
+
+    st.markdown("### Result")
+
+    DECISION_STYLE = {
+        "STOP_EFFICACY": ("success", "✅", "Stop -- efficacy boundary crossed",
+                           "beats the efficacy bar at this information fraction"),
+        "STOP_SIGNIFICANT_LOSS": ("error", "🔻", "Stop -- significantly worse",
+                                   "crossed the lower (two-sided) boundary"),
+        "STOP_FUTILITY": ("warning", "🛑", "Stop -- futility boundary crossed",
+                           "unlikely to reach significance even at the planned maximum sample size"),
+        "CONTINUE": ("info", "➡️", "Continue", "between the boundaries -- keep collecting data"),
+    }
+
+    for name, result in results.items():
+        style, icon, headline, blurb = DECISION_STYLE[result.decision]
+        box = {"success": st.success, "error": st.error, "warning": st.warning, "info": st.info}[style]
+        box(f"**{name}: {headline}.** Latest Z = {result.z[-1]:.3f} ({blurb}), "
+            f"at information fraction {result.t_obs[-1]:.2f}.", icon=icon)
+        st.caption(
+            f"{name} naive point estimate (NOT bias-corrected for sequential monitoring -- see README): "
+            f"{result.point_estimate:+.4f}  [{result.ci_low:+.4f}, {result.ci_high:+.4f}]"
+        )
+
+        fig, ax = plt.subplots(figsize=(8, 3.8))
+        fig.patch.set_facecolor("#FAF7F2")
+        ax.set_facecolor("#FAF7F2")
+        ax.plot(result.t_obs, result.efficacy_bounds, color="#D16A0F", marker="o", linewidth=2, label="Efficacy (win)")
+        if result.lower_efficacy_bounds is not None:
+            ax.plot(result.t_obs, result.lower_efficacy_bounds, color="#C2381E", marker="o", linewidth=2,
+                    label="Lower (significant loss)")
+        if result.futility_bounds is not None:
+            ax.plot(result.t_obs, result.futility_bounds, color="#6C5F54", marker="o", linewidth=2,
+                    linestyle="--", label="Futility")
+        ax.plot(result.t_obs, result.z, color="#2C6FB5", marker="D", linewidth=2, label=f"Observed Z ({name})")
+        ax.axhline(0, color="#C9C0B7", linewidth=1)
+        ax.set_xlabel("Observed information fraction")
+        ax.set_ylabel("Z statistic")
+        ax.set_title(f"{name}: trajectory vs. boundaries", fontsize=12, fontweight="bold", color="#14100D", loc="left")
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+        ax.legend(frameon=False, fontsize=8)
+        st.pyplot(fig)
