@@ -1,0 +1,7 @@
+[theme]
+# 120Feet brand tokens (see anthropic-skills:120feet-brand / references/tokens.css)
+primaryColor = "#D16A0F"            # --brand-orange
+backgroundColor = "#FAF7F2"         # --ink-50 (warm off-white page bg, not pure white)
+secondaryBackgroundColor = "#F1ECE5" # --ink-100 (card/sidebar surface)
+textColor = "#1F1813"               # --ink-900
+font = "sans serif"
