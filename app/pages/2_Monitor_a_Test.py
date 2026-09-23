@@ -222,17 +222,36 @@ if prior is None:
     if prior is None or set(prior.columns) != set(default_df.columns):
         prior = default_df
 
-# NOTE: deliberately passing the SAME dataframe shape/column order to this widget on every
-# rerun (never reordering or injecting a derived column into it, as an earlier version did
-# with a computed "Expected day" column) -- data_editor is stateful and keyed, and reshaping
-# the value fed into it on every rerun is what caused edits to occasionally vanish when
-# clicking from one cell to another (the widget treats a reshaped value as new external data
-# and can reset the in-progress edit). The expected-day reference now lives in its own
-# read-only display below, decoupled from this editable table.
-edited = st.data_editor(prior, num_rows="dynamic", width="stretch",
-                         key="interim_editor", column_config=_column_config())
+# NOTE: the whole table + its action buttons live inside a form. Without this, every single
+# cell commit (pressing Tab/Enter, or clicking from one cell to another) fires an immediate
+# script rerun -- and clicking OUT of the grid entirely (e.g. onto the caption text below it)
+# can send that rerun before the browser has fully synced the just-typed cell's value back to
+# Streamlit, which is what was wiping cells: the value you'd just typed hadn't round-tripped
+# yet when the reset-triggering rerun fired. Inside a form, nothing reruns until an explicit
+# submit button is clicked, so the ENTIRE grid's final state (every cell, however it was last
+# left) is only read once, at that single deliberate moment -- there's no intermediate rerun
+# for a not-yet-synced edit to be lost to. enter_to_submit=False so pressing Enter to commit a
+# cell (a normal spreadsheet habit) moves to the next row instead of submitting the form.
+with st.form("interim_form", border=False, enter_to_submit=False):
+    edited = st.data_editor(prior, num_rows="dynamic", width="stretch",
+                             key="interim_editor", column_config=_column_config())
+
+    button_col, save_col = st.columns([1, 1])
+    with button_col:
+        analyze_clicked = st.form_submit_button("Analyze", type="primary")
+    with save_col:
+        if design_id is not None:
+            save_clicked = st.form_submit_button("💾 Save entries")
+        else:
+            save_clicked = False
+            st.caption("Save this design on the **Design a test** page to enable saving entries here.")
+
 df = edited
 st.session_state["interim_df"] = df  # gets stored, analyzed, or saved below.
+
+if save_clicked and design_id is not None:
+    store.save_interim_df(design_id, df, inputs.metric_type, variant_names)
+    st.success("Saved.")
 
 if cadence is not None:
     ref = df[["Look"]].copy()
@@ -243,17 +262,6 @@ if cadence is not None:
         ref["Expected day"] = ref["Expected day"].astype(int)
         with st.expander("Expected check-in days (from the Design page's traffic estimate)"):
             st.dataframe(ref, width="content", hide_index=True)
-
-button_col, save_col = st.columns([1, 1])
-with button_col:
-    analyze_clicked = st.button("Analyze", type="primary")
-with save_col:
-    if design_id is not None:
-        if st.button("💾 Save entries"):
-            store.save_interim_df(design_id, df, inputs.metric_type, variant_names)
-            st.success("Saved.")
-    else:
-        st.caption("Save this design on the **Design a test** page to enable saving entries here.")
 
 if analyze_clicked:
     rows = df.dropna(how="all")
