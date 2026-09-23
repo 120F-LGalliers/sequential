@@ -137,6 +137,11 @@ if "design_result" in st.session_state:
     result = st.session_state["design_result"]
     inp = result.inputs
 
+    weekly_traffic = st.session_state.get("weekly_traffic", 0)
+    cadence = (suggest_monitoring_cadence(result, weekly_traffic_total=weekly_traffic)
+               if weekly_traffic and weekly_traffic > 0 else None)
+    total_days = cadence.projected_weeks_to_max_n * 7 if cadence is not None else None
+
     st.markdown("### Result")
     if inp.n_variants > 1 or inp.sides == "two":
         st.caption(
@@ -184,6 +189,31 @@ if "design_result" in st.session_state:
     fig.tight_layout()
     st.pyplot(fig)
 
+    if cadence is not None:
+        st.markdown("##### Time this saves, at your expected traffic")
+        tc1, tc2, tc3 = st.columns(3)
+        tc1.metric("Saved, if no real effect", f"{cadence.days_saved_if_no_effect:.0f} days sooner",
+                   help="How much sooner this test typically finishes, vs. running all the way to the "
+                        "sequential max, if there's truly no difference between variant and control.")
+        tc2.metric("Saved, if the effect is real", f"{cadence.days_saved_if_real_effect:.0f} days sooner",
+                   help="How much sooner this test typically finishes, vs. running all the way to the "
+                        "sequential max, if the true effect matches your MDE.")
+        tc3.metric("Extra time, worst case", f"+{cadence.extra_days_max_vs_standard:.0f} days",
+                   delta=f"vs. a standard test", delta_color="off",
+                   help="How much LONGER this design takes in its worst case (running all the way to "
+                        "the sequential max) compared to a standard, single-look test. This is the "
+                        "downside you're trading for the chance to stop early in the two scenarios above.")
+        st.caption(
+            "A good one-liner for stakeholders: this design usually finishes noticeably faster than a "
+            "standard test, and only very rarely takes a little longer -- worth showing alongside the "
+            "chart above when explaining why a sequential design is worth the extra complexity."
+        )
+    else:
+        st.caption(
+            "Enter your expected weekly traffic above (before computing the design) to see how much "
+            "time each scenario above actually saves -- useful for explaining the trade-off to the team."
+        )
+
     with st.expander("What do these four numbers mean?"):
         st.markdown(
             "- **Standard test** — what you'd need per variant with a traditional, single-look test "
@@ -222,11 +252,6 @@ if "design_result" in st.session_state:
     table["Efficacy Z (win)"] = [f"{z:.3f}" for z in result.efficacy.bounds]
     st.dataframe(table, width="stretch", hide_index=True)
 
-    weekly_traffic = st.session_state.get("weekly_traffic", 0)
-    cadence = (suggest_monitoring_cadence(result, weekly_traffic_total=weekly_traffic)
-               if weekly_traffic and weekly_traffic > 0 else None)
-    total_days = cadence.projected_weeks_to_max_n * 7 if cadence is not None else None
-
     col_cadence, col_chart = st.columns([1.1, 0.9])
 
     with col_cadence:
@@ -237,7 +262,7 @@ if "design_result" in st.session_state:
             cc2.metric("Check-in interval", cadence.suggested_interval_label,
                        help=f"~every {cadence.suggested_interval_days:.1f} days, spreading "
                             f"{inp.n_looks} looks evenly across the projected duration.")
-            st.caption(
+            st.markdown(
                 f"A planning aid, not a statistical requirement -- boundaries are recomputed for "
                 f"whatever information fraction you actually observe, so drifting from this doesn't "
                 f"break error control. Skip the first check until at least "
@@ -248,7 +273,7 @@ if "design_result" in st.session_state:
                 f"was calibrated for. The chart on the right marks each planned check-in day."
             )
         else:
-            st.caption(
+            st.markdown(
                 "Enter your expected weekly traffic above (before computing the design) to get a "
                 "suggested check-in cadence, and see planned check-in days marked on the boundary "
                 "chart."
