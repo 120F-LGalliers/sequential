@@ -99,33 +99,23 @@ st.caption(
     f"remove rows below if your actual check-ins end up different. Enter CUMULATIVE totals (not just "
     f"this period's numbers) -- e.g. Look 3's row should include everyone counted in Looks 1 and 2 "
     f"as well."
-    + ("" if cadence is None else " The **Expected day** column shows the projected calendar day for "
-       "each look, from the Design page's traffic estimate -- a planning guide for when the next "
-       "check-in is due, not a requirement.")
+    + ("" if cadence is None else " See the **expected check-in days** reference below the table -- "
+       "a planning guide for when the next check-in is due, from the Design page's traffic estimate, "
+       "not a requirement.")
 )
 
 
-def _with_expected_day(df: pd.DataFrame) -> pd.DataFrame:
-    """Adds/recomputes the read-only 'Expected day' column from each row's actual "Look"
-    value (not just position) -- recalculated every time rather than stored, so it stays
-    right even if rows were added, removed, or renumbered. No-op if there's no cadence yet."""
-    if cadence is None:
-        return df.drop(columns=["Expected day"], errors="ignore")
-    n_planned = len(design_result.t)
-
-    def expected_day(look_value):
-        if pd.isna(look_value):
-            return None
-        idx = int(look_value) - 1
-        if 0 <= idx < n_planned:
-            return round(design_result.t[idx] * total_days)
+def _expected_day_lookup(look_value) -> int | None:
+    """Projected calendar day for a given 'Look' value, from the Design page's traffic
+    estimate. Returns None if there's no cadence yet, or the look number is out of the
+    planned range (e.g. an extra look the user added beyond what was originally planned)."""
+    if cadence is None or pd.isna(look_value):
         return None
-
-    df = df.copy()
-    df["Expected day"] = df["Look"].map(expected_day)
-    # Keep "Expected day" right after "Look" for a sensible reading order.
-    cols = ["Look", "Expected day"] + [c for c in df.columns if c not in ("Look", "Expected day")]
-    return df[cols]
+    n_planned = len(design_result.t)
+    idx = int(look_value) - 1
+    if 0 <= idx < n_planned:
+        return round(design_result.t[idx] * total_days)
+    return None
 
 
 def _default_columns():
@@ -163,13 +153,6 @@ def _column_config():
                  "doesn't affect the analysis, which uses the actual sample sizes you enter, not this "
                  "number.",
             format="%d", min_value=1, step=1,
-        ),
-        "Expected day": st.column_config.NumberColumn(
-            "Expected day",
-            help="Projected calendar day (from launch) for this look, based on the expected weekly "
-                 "traffic entered on the Design page. Read-only -- a planning estimate, not a fixed "
-                 "schedule, so it's fine to check in earlier or later than shown.",
-            format="%d", disabled=True,
         ),
         "Control N": st.column_config.NumberColumn(
             "Control — sample size (cumulative)",
@@ -219,10 +202,6 @@ def _column_config():
     return config
 
 
-def _strip_expected_day(df):
-    return None if df is None else df.drop(columns=["Expected day"], errors="ignore")
-
-
 default_df = _default_columns()
 
 # First time this design's id shows up in this session, check the database for anything
@@ -239,14 +218,31 @@ if design_id is not None and st.session_state.get("interim_loaded_for_id") != de
 if prior is None:
     # If a design change altered the expected columns (metric type or variant count), don't try
     # to reuse a stale table shape.
-    prior = _strip_expected_day(st.session_state.get("interim_df"))
+    prior = st.session_state.get("interim_df")
     if prior is None or set(prior.columns) != set(default_df.columns):
         prior = default_df
 
-edited = st.data_editor(_with_expected_day(prior), num_rows="dynamic", width="stretch",
+# NOTE: deliberately passing the SAME dataframe shape/column order to this widget on every
+# rerun (never reordering or injecting a derived column into it, as an earlier version did
+# with a computed "Expected day" column) -- data_editor is stateful and keyed, and reshaping
+# the value fed into it on every rerun is what caused edits to occasionally vanish when
+# clicking from one cell to another (the widget treats a reshaped value as new external data
+# and can reset the in-progress edit). The expected-day reference now lives in its own
+# read-only display below, decoupled from this editable table.
+edited = st.data_editor(prior, num_rows="dynamic", width="stretch",
                          key="interim_editor", column_config=_column_config())
-df = _strip_expected_day(edited)  # "Expected day" is read-only/derived -- keep it out of what
+df = edited
 st.session_state["interim_df"] = df  # gets stored, analyzed, or saved below.
+
+if cadence is not None:
+    ref = df[["Look"]].copy()
+    ref["Expected day"] = ref["Look"].map(_expected_day_lookup)
+    ref = ref.dropna()
+    if not ref.empty:
+        ref["Look"] = ref["Look"].astype(int)
+        ref["Expected day"] = ref["Expected day"].astype(int)
+        with st.expander("Expected check-in days (from the Design page's traffic estimate)"):
+            st.dataframe(ref, width="content", hide_index=True)
 
 button_col, save_col = st.columns([1, 1])
 with button_col:
