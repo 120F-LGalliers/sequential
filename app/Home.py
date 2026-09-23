@@ -48,7 +48,7 @@ with col1:
 with col2:
     st.markdown("**2. Monitor a test**")
     st.markdown(
-        "Once a test is live, log cumulative sample size and conversions/mean per arm at "
+        "Once a test is live, log cumulative sample size and conversions/mean per variant at "
         "each check-in (manual entry for now -- see below). Get a continue/stop read, "
         "recomputed for the actual information fraction observed."
     )
