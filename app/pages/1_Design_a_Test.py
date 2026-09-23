@@ -53,7 +53,7 @@ if saved_designs:
 row1a, row1b = st.columns(2)
 with row1a:
     with st.container(border=True):
-        st.markdown("**Metric & effect size**")
+        st.markdown("**Test setup**")
         metric_type = st.radio("Metric type", ["binary", "continuous"], horizontal=True,
                                 help="Binary = conversion rate. Continuous = a per-user mean, e.g. revenue or AOV.")
         baseline = st.number_input(
@@ -81,6 +81,20 @@ with row1a:
                  "sample size, so an unrealistically small MDE can make a test take months to reach a "
                  "read. If traffic is limited, it's usually better to widen the MDE to something still "
                  "commercially meaningful than to run an underpowered test.")
+        sides = st.radio(
+            "Sides", ["one", "two"], horizontal=True,
+            format_func=lambda s: "One-sided" if s == "one" else "Two-sided",
+            help="One-sided (standard CRO framing): does the variant beat control? Two-sided: also gives "
+                 "you a boundary for declaring a variant significantly WORSE than control, at the cost of "
+                 "a slightly bigger required sample size for the same confidence on the 'beats' question.",
+        )
+        n_variants = st.number_input(
+            "Number of variants vs. control", min_value=1, max_value=6, value=1, step=1,
+            help="More than 1 variant splits your alpha budget across comparisons (Bonferroni "
+                 "correction) so the overall false-positive rate across all of them stays at your "
+                 "chosen alpha -- each comparison gets a stricter effective alpha, and the required "
+                 "sample size per variant goes up accordingly.",
+        )
 with row1b:
     with st.container(border=True):
         st.markdown("**Statistical parameters**")
@@ -127,34 +141,15 @@ with row1b:
                 "Futility spending function", list(SPENDING_FUNCTIONS.keys()),
                 index=list(SPENDING_FUNCTIONS.keys()).index("obrien_fleming"))
 
-row2a, row2b = st.columns(2)
-with row2a:
-    with st.container(border=True):
-        st.markdown("**Test structure**")
-        sides = st.radio(
-            "Sides", ["one", "two"], horizontal=True,
-            format_func=lambda s: "One-sided" if s == "one" else "Two-sided",
-            help="One-sided (standard CRO framing): does the variant beat control? Two-sided: also gives "
-                 "you a boundary for declaring a variant significantly WORSE than control, at the cost of "
-                 "a slightly bigger required sample size for the same confidence on the 'beats' question.",
-        )
-        n_variants = st.number_input(
-            "Number of variants vs. control", min_value=1, max_value=6, value=1, step=1,
-            help="More than 1 variant splits your alpha budget across comparisons (Bonferroni "
-                 "correction) so the overall false-positive rate across all of them stays at your "
-                 "chosen alpha -- each comparison gets a stricter effective alpha, and the required "
-                 "sample size per variant goes up accordingly.",
-        )
-with row2b:
-    with st.container(border=True):
-        st.markdown("**Check-in cadence** &nbsp; _(optional)_")
-        weekly_traffic = st.number_input(
-            "Expected total weekly traffic into this test (control + all variants combined)",
-            min_value=0, value=0, step=100,
-            help="Used only to suggest how often to actually check in on this test once it's live -- it "
-                 "doesn't affect the design itself. Leave at 0 to skip. Assumes roughly equal traffic "
-                 "allocation across variants, same assumption the Monitor page's info-fraction calc makes.",
-        )
+with st.container(border=True):
+    st.markdown("**Check-in cadence** &nbsp; _(optional)_")
+    weekly_traffic = st.number_input(
+        "Expected total weekly traffic into this test (control + all variants combined)",
+        min_value=0, value=0, step=100,
+        help="Used only to suggest how often to actually check in on this test once it's live -- it "
+             "doesn't affect the design itself. Leave at 0 to skip. Assumes roughly equal traffic "
+             "allocation across variants, same assumption the Monitor page's info-fraction calc makes.",
+    )
 
 st.write("")
 submitted = st.button("Compute design", type="primary", width="stretch")
