@@ -207,6 +207,27 @@ class MonitoringCadence:
     suggested_interval_label: str
     first_check_after_days: float
     first_check_info_fraction: float
+    weeks_to_standard: float       # time to reach the standard-test sample size, at this traffic
+    weeks_to_expected_h0: float    # time to reach the "typical, no real effect" sample size
+    weeks_to_expected_h1: float    # time to reach the "typical, real effect" sample size
+
+    @property
+    def days_saved_if_no_effect(self) -> float:
+        """How much sooner, in days, a test typically finishes if there's no real effect,
+        compared to running all the way to the sequential max."""
+        return (self.projected_weeks_to_max_n - self.weeks_to_expected_h0) * 7
+
+    @property
+    def days_saved_if_real_effect(self) -> float:
+        """How much sooner, in days, a test typically finishes if the effect is real,
+        compared to running all the way to the sequential max."""
+        return (self.projected_weeks_to_max_n - self.weeks_to_expected_h1) * 7
+
+    @property
+    def extra_days_max_vs_standard(self) -> float:
+        """How much LONGER the sequential design's worst case (never stopping early) takes
+        vs. a standard, single-look test -- the cost side of the trade-off."""
+        return (self.projected_weeks_to_max_n - self.weeks_to_standard) * 7
 
 
 def suggest_monitoring_cadence(result: DesignResult, weekly_traffic_total: float,
@@ -267,6 +288,9 @@ def suggest_monitoring_cadence(result: DesignResult, weekly_traffic_total: float
         suggested_interval_label=label,
         first_check_after_days=first_check_after_days,
         first_check_info_fraction=min_info_fraction_first_look,
+        weeks_to_standard=result.n_fixed_per_arm / weekly_traffic_per_arm,
+        weeks_to_expected_h0=result.expected_n_under_h0 / weekly_traffic_per_arm,
+        weeks_to_expected_h1=result.expected_n_under_h1 / weekly_traffic_per_arm,
     )
 
 
