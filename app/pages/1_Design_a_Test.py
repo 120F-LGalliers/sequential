@@ -291,10 +291,6 @@ if "design_result" in st.session_state:
             )
 
     with col_chart:
-        chart_header = "#### Boundary chart"
-        if inp.n_variants > 1:
-            chart_header += f" ({inp.n_variants} variants)"
-        st.markdown(chart_header)
         fig, ax = plt.subplots(figsize=(6.2, 3.8))
         fig.patch.set_facecolor("#FAF7F2")
         ax.set_facecolor("#FAF7F2")
@@ -319,11 +315,17 @@ if "design_result" in st.session_state:
             ax.tick_params(axis="x", labelsize=8)
         ax.set_ylabel("Z statistic", fontsize=9)
         ax.tick_params(axis="y", labelsize=8)
-        # No in-chart title here -- the "Boundary chart" header above (a plain Streamlit markdown
-        # block, flush with the column's left edge) IS the title. A matplotlib `loc="left"` title
-        # is anchored to the axes box, which sits inset from the image's true left edge by the width
-        # of the y-axis tick labels -- so it never lines up with the Streamlit header above it,
-        # however the columns are sized. One title, one place, stays aligned by construction.
+        # Title lives INSIDE the figure (loc="left"), not as a separate Streamlit markdown header
+        # above it -- matplotlib anchors a loc="left" title to the axes' own left edge, i.e. exactly
+        # where the y-axis (and all the plotted content) visually starts. A Streamlit header above
+        # the image instead sits flush with the column's edge, which is well to the left of that --
+        # the axis has its own reserved margin for the tick numbers and the "Z statistic" label -- so
+        # the two never lined up. One title, drawn by the same renderer as the chart it's titling, is
+        # aligned with it by construction, at any column width.
+        chart_title = "Boundary chart"
+        if inp.n_variants > 1:
+            chart_title += f" ({inp.n_variants} variants)"
+        ax.set_title(chart_title, loc="left", fontsize=13, fontweight="bold", color="#14100D", pad=10)
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
         ax.legend(frameon=False, fontsize=7)
