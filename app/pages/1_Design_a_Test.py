@@ -61,10 +61,10 @@ with st.form("design_form"):
             help="More than 1 variant splits your alpha budget across comparisons (Bonferroni "
                  "correction) so the overall false-positive rate across all of them stays at your "
                  "chosen alpha -- each comparison gets a stricter effective alpha, and the required "
-                 "sample size per arm goes up accordingly.",
+                 "sample size per variant goes up accordingly.",
         )
     with c2:
-        alpha = st.number_input("Family-wise alpha (overall false-positive budget)", min_value=0.001,
+        alpha = st.number_input("Overall false-positive budget (alpha)", min_value=0.001,
                                  max_value=0.5, value=0.05,
                                  help="With more than one variant, this is split across all of them "
                                       "(Bonferroni) -- it's the TOTAL chance of any false positive "
@@ -109,7 +109,7 @@ with st.form("design_form"):
         min_value=0, value=0, step=100,
         help="Used only to suggest how often to actually check in on this test once it's live -- it "
              "doesn't affect the design itself. Leave at 0 to skip. Assumes roughly equal traffic "
-             "allocation across arms, same assumption the Monitor page's info-fraction calc makes.",
+             "allocation across variants, same assumption the Monitor page's info-fraction calc makes.",
     )
 
     submitted = st.form_submit_button("Compute design", type="primary")
@@ -145,20 +145,74 @@ if "design_result" in st.session_state:
             + (f"  |  per-tail alpha used in the boundary calc (two-sided): **{inp.alpha_tail:.4f}**"
                if inp.sides == "two" else "")
         )
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Fixed-horizon N / arm", f"{result.n_fixed_per_arm:,}")
-    m2.metric("Group sequential max N / arm", f"{result.n_max_per_arm:,}",
-              delta=f"{100 * (result.inflation_factor - 1):+.1f}% vs fixed", delta_color="inverse")
-    m3.metric("Expected N / arm if no effect", f"{result.expected_n_under_h0:,.0f}",
-              help="Average sample size if the null is true (H0) -- most of these tests stop early for futility.")
-    m4.metric("Expected N / arm if true effect", f"{result.expected_n_under_h1:,.0f}",
-              help="Average sample size if the design's true effect holds (H1).")
+
+    st.markdown("#### Sample size needed")
+    st.caption(
+        "All four numbers below are **sample size per variant** -- each variant needs roughly this "
+        "many people/sessions, and so does control (not a total across the whole test). They answer "
+        "slightly different questions, which is why there are four rather than one -- the chart makes "
+        "that easier to see at a glance than the numbers alone."
+    )
+
+    fig, ax = plt.subplots(figsize=(9, 2.6))
+    fig.patch.set_facecolor("#FAF7F2")
+    ax.set_facecolor("#FAF7F2")
+    points = [
+        (result.n_fixed_per_arm, "Standard test\n(no interim looks)", "#6C5F54"),
+        (result.expected_n_under_h0, "Typical, if no\nreal effect", "#2C6FB5"),
+        (result.expected_n_under_h1, "Typical, if the\neffect is real", "#D16A0F"),
+        (result.n_max_per_arm, "Sequential max\n(plan capacity for this)", "#C2381E"),
+    ]
+    points.sort(key=lambda p: p[0])
+    track_max = result.n_max_per_arm
+    ax.barh([0], [track_max], height=0.05, color="#F1ECE5", zorder=1)
+    for i, (value, label, color) in enumerate(points):
+        above = i % 2 == 0
+        y_stem, y_text = (0.42, 0.55) if above else (-0.42, -0.55)
+        va = "bottom" if above else "top"
+        ax.plot([value, value], [0, y_stem], color=color, linewidth=1.5, zorder=2)
+        ax.scatter([value], [0], color=color, s=60, zorder=3, edgecolor="white", linewidth=1)
+        ax.annotate(f"{label}\n{value:,.0f}", xy=(value, y_text), ha="center", va=va,
+                    fontsize=8.5, color="#14100D", linespacing=1.4)
+    ax.set_ylim(-1, 1)
+    ax.set_yticks([])
+    ax.set_xlim(0, track_max * 1.1)
+    ax.set_xlabel("Sample size per variant (control needs roughly the same)")
+    for spine in ["top", "right", "left"]:
+        ax.spines[spine].set_visible(False)
+    fig.tight_layout()
+    st.pyplot(fig)
+
+    with st.expander("What do these four numbers mean?"):
+        st.markdown(
+            "- **Standard test** — what you'd need per variant with a traditional, single-look test "
+            "(no interim analyses along the way). This is the baseline the sequential design's extra "
+            "sample-size cost is measured against.\n"
+            "- **Sequential max** — the most you'd EVER need per variant with this sequential design, "
+            "if it runs all the way to the final planned look without stopping early. This is the "
+            "number to plan traffic capacity for before you start.\n"
+            "- **Typical, if no real effect** — the average sample size per variant across many "
+            "hypothetical repeats of this test, assuming there's truly no difference between variant "
+            "and control. Most such tests stop early for futility, so this is usually well under the "
+            "sequential max.\n"
+            "- **Typical, if the effect is real** — the average sample size per variant assuming the "
+            "true effect matches your MDE. Most such tests stop early for efficacy, so this too is "
+            "usually well under the sequential max.\n\n"
+            "In short: **plan for the sequential max**, but expect most tests to finish sooner --"
+            " that's the whole point of a sequential design over a standard one."
+        )
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Standard test", f"{result.n_fixed_per_arm:,}")
+        m2.metric("Sequential max", f"{result.n_max_per_arm:,}",
+                  delta=f"{100 * (result.inflation_factor - 1):+.1f}% vs standard test", delta_color="inverse")
+        m3.metric("Typical, no real effect", f"{result.expected_n_under_h0:,.0f}")
+        m4.metric("Typical, real effect", f"{result.expected_n_under_h1:,.0f}")
 
     st.markdown("#### Boundary table")
     table = {
         "Look": list(range(1, inp.n_looks + 1)),
-        "Info fraction": [f"{t:.2f}" for t in result.t],
-        "N / arm at this look": [int(round(t * result.n_max_per_arm)) for t in result.t],
+        "% of max sample": [f"{100 * t:.0f}%" for t in result.t],
+        "Sample size at this look (per variant)": [int(round(t * result.n_max_per_arm)) for t in result.t],
     }
     if result.lower_efficacy is not None:
         table["Lower Z (significant loss)"] = [f"{z:.3f}" for z in result.lower_efficacy.bounds]
