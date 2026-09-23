@@ -100,16 +100,27 @@ def _solve_one_sided(t: np.ndarray, theta: float, increments: np.ndarray, direct
         # crossing_prob is monotone in bound_k (decreasing for 'upper', increasing for 'lower').
         lo_search, hi_search = -20.0, 20.0
         f_lo, f_hi = crossing_prob(lo_search), crossing_prob(hi_search)
-        if direction == "upper":
-            f = lambda b: crossing_prob(b) - target
-        else:
-            f = lambda b: crossing_prob(b) - target
-        # Guard against a target outside the achievable range (can happen with
-        # pathological spending near t->0); clip rather than raise.
+        f = lambda b: crossing_prob(b) - target
+        # Guard against a target outside the achievable range (can happen with pathological
+        # spending near t->0, including the common real-world case of an early monitoring
+        # look at a much smaller information fraction than the design-stage grid ever used --
+        # e.g. alpha_spend underflowing to exactly 0.0 in float64 at a very small t). Without
+        # this, brentq would be asked to solve crossing_prob(bound) == target for a target
+        # outside what's achievable in [lo_search, hi_search] and would raise; instead we clip
+        # to whichever end of the search range gets closest.
+        #
+        # 'upper' (efficacy): crossing_prob DECREASES as bound_k increases, so f_lo (at
+        # lo_search) is the achievable MAXIMUM and f_hi (at hi_search) is the achievable
+        # MINIMUM. target > f_lo (wants an even higher crossing-prob than the loosest bound
+        # in range gives) clips to lo_search; target < f_hi (wants an even lower crossing-prob
+        # than the strictest bound in range gives -- e.g. the target==0.0 underflow case)
+        # clips to hi_search, i.e. the hardest-to-cross bound available, NOT the easiest.
         if direction == "upper" and (f_lo - target) * (f_hi - target) > 0:
-            bound_k = hi_search if crossing_prob(lo_search) < target else lo_search
+            bound_k = lo_search if target > f_lo else hi_search
+        # 'lower' (futility): crossing_prob INCREASES as bound_k increases, so f_lo is the
+        # achievable MINIMUM and f_hi is the achievable MAXIMUM -- mirror image of above.
         elif direction == "lower" and (f_lo - target) * (f_hi - target) > 0:
-            bound_k = lo_search if crossing_prob(hi_search) > target else hi_search
+            bound_k = lo_search if target < f_lo else hi_search
         else:
             bound_k = brentq(f, lo_search, hi_search, xtol=1e-10, rtol=1e-12, maxiter=200)
 
