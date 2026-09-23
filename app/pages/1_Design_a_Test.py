@@ -291,7 +291,10 @@ if "design_result" in st.session_state:
             )
 
     with col_chart:
-        st.markdown("#### Boundary chart")
+        chart_header = "#### Boundary chart"
+        if inp.n_variants > 1:
+            chart_header += f" ({inp.n_variants} variants)"
+        st.markdown(chart_header)
         fig, ax = plt.subplots(figsize=(6.2, 3.8))
         fig.patch.set_facecolor("#FAF7F2")
         ax.set_facecolor("#FAF7F2")
@@ -316,10 +319,11 @@ if "design_result" in st.session_state:
             ax.tick_params(axis="x", labelsize=8)
         ax.set_ylabel("Z statistic", fontsize=9)
         ax.tick_params(axis="y", labelsize=8)
-        title = "Stopping boundaries"
-        if inp.n_variants > 1:
-            title += f" ({inp.n_variants} variants)"
-        ax.set_title(title, fontsize=10.5, fontweight="bold", color="#14100D", loc="left")
+        # No in-chart title here -- the "Boundary chart" header above (a plain Streamlit markdown
+        # block, flush with the column's left edge) IS the title. A matplotlib `loc="left"` title
+        # is anchored to the axes box, which sits inset from the image's true left edge by the width
+        # of the y-axis tick labels -- so it never lines up with the Streamlit header above it,
+        # however the columns are sized. One title, one place, stays aligned by construction.
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
         ax.legend(frameon=False, fontsize=7)
