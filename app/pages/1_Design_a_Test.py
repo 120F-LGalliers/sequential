@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from app._theme import apply_brand, eyebrow
+from engine import store
 from engine.design import DesignInputs, design, suggest_monitoring_cadence, summarize
 from engine.spending_functions import SPENDING_FUNCTIONS
 
@@ -17,6 +18,37 @@ apply_brand()
 
 eyebrow("Step 1")
 st.title("Design a test")
+
+saved_designs = store.list_designs()
+if saved_designs:
+    with st.expander(f"Load a saved design ({len(saved_designs)} saved)"):
+        options = {
+            d["id"]: f"{d['name']} -- {d['created_at'][:10]}, {d['metric_type']}, "
+                      f"{d['n_variants']} variant(s), {d['n_looks']} looks"
+            for d in saved_designs
+        }
+        chosen_id = st.selectbox(
+            "Saved designs", list(options.keys()), format_func=lambda i: options[i],
+            key="design_picker",
+        )
+        if st.button("Load this design"):
+            name, loaded_inputs, loaded_traffic = store.load_design(chosen_id)
+            try:
+                loaded_result = design(loaded_inputs)
+            except Exception as e:
+                st.error(f"Couldn't recompute this saved design: {e}")
+                st.stop()
+            st.session_state["design_result"] = loaded_result
+            st.session_state["design_inputs"] = loaded_inputs
+            st.session_state["weekly_traffic"] = loaded_traffic
+            st.session_state["design_id"] = chosen_id
+            st.session_state["design_name"] = name
+            # A different design's interim data shouldn't carry over -- Monitor page
+            # will fetch whatever's saved for THIS design_id (if anything) fresh.
+            st.session_state.pop("interim_df", None)
+            st.session_state.pop("interim_loaded_for_id", None)
+            st.success(f"Loaded '{name}'.")
+            st.rerun()
 
 with st.form("design_form"):
     c1, c2 = st.columns(2)
@@ -130,8 +162,12 @@ if submitted:
     st.session_state["design_result"] = result
     st.session_state["design_inputs"] = inputs
     st.session_state["weekly_traffic"] = weekly_traffic
-    # A fresh design invalidates any interim data entered against a previous one.
+    # A fresh design is a different (not-yet-saved) design from whatever was loaded/saved
+    # before -- clear the old id so saving/loading interim data doesn't cross-contaminate.
     st.session_state.pop("interim_df", None)
+    st.session_state.pop("design_id", None)
+    st.session_state.pop("design_name", None)
+    st.session_state.pop("interim_loaded_for_id", None)
 
 if "design_result" in st.session_state:
     result = st.session_state["design_result"]
@@ -143,6 +179,37 @@ if "design_result" in st.session_state:
     total_days = cadence.projected_weeks_to_max_n * 7 if cadence is not None else None
 
     st.markdown("### Result")
+
+    save_col, name_col = st.columns([1, 3])
+    with name_col:
+        default_name = st.session_state.get("design_name", "")
+        design_name = st.text_input("Name this design (to save it)", value=default_name,
+                                     placeholder="e.g. Avis -- homepage hero CTA",
+                                     label_visibility="collapsed" if default_name else "visible")
+    with save_col:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("💾 Save design"):
+            if not design_name.strip():
+                st.warning("Give the design a name first.")
+            else:
+                new_id = store.save_design(design_name.strip(), inp, weekly_traffic)
+                st.session_state["design_id"] = new_id
+                st.session_state["design_name"] = design_name.strip()
+                st.success(f"Saved as '{design_name.strip()}' (id {new_id}). It'll show up under "
+                           f"**Load a saved design** above, and the Monitor page will save/load "
+                           f"interim data against it too.")
+                st.rerun()
+    if "design_id" in st.session_state:
+        st.caption(
+            f"This design is saved as **{st.session_state.get('design_name', '')}** "
+            f"(id {st.session_state['design_id']}). Saving again with the same name creates a "
+            f"separate copy -- there's no overwrite yet."
+        )
+    else:
+        st.caption(
+            "Not saved yet -- this design (and any interim data entered against it on the "
+            "Monitor page) only lives in this browser tab until you save it or the app restarts."
+        )
     if inp.n_variants > 1 or inp.sides == "two":
         st.caption(
             f"Per-comparison alpha after Bonferroni ({inp.n_variants} variant(s)): "

@@ -6,10 +6,13 @@ pulling from your existing reports. When those credentials exist, this page
 is where an automated pull would slot in (replacing the data_editor with a
 "pull latest from Adobe" button) without changing anything in engine/.
 
-NOTHING ON THIS PAGE PERSISTS. There is no database or file behind it yet
-(by design, for now) -- refreshing the page, closing the tab, or the app
-restarting all lose whatever's in the table below. See the banner at the
-top: re-enter your data from your own records each time you come back.
+PERSISTENCE IS OPTIONAL, PER-DESIGN, AND HOST-DEPENDENT. If the current
+design was saved on the Design page (see engine/store.py), a "Save entries"
+button here writes this table to SQLite and reloads it next time -- but only
+if the app is running somewhere with a persistent disk (see store.py's
+module docstring; Streamlit Community Cloud's disk does NOT survive a
+redeploy or a sleep/wake cycle). An unsaved design still works exactly as
+before: everything lives only in this browser tab until the app restarts.
 """
 
 import sys
@@ -22,6 +25,7 @@ import pandas as pd
 import streamlit as st
 
 from app._theme import apply_brand, eyebrow
+from engine import store
 from engine.design import suggest_monitoring_cadence
 from engine.interim import ArmStats, Look, analyze
 
@@ -39,14 +43,25 @@ if "design_result" not in st.session_state:
 design_result = st.session_state["design_result"]
 inputs = design_result.inputs
 variant_names = [f"Variant {chr(65 + i)}" for i in range(inputs.n_variants)]  # Variant A, B, C, ...
+design_id = st.session_state.get("design_id")
 
-st.error(
-    "**Nothing on this page is saved.** There's no storage behind this tool yet -- refreshing, "
-    "closing the tab, or the app restarting all lose the table below. Keep your own record of "
-    "cumulative numbers (e.g. in the Adobe/Target report you're pulling from) and re-enter them "
-    "here each time you check in on a test.",
-    icon="💾",
-)
+if design_id is not None:
+    st.info(
+        f"**Entries save against '{st.session_state.get('design_name', '')}'.** Use the **Save "
+        f"entries** button below the table. Keep your own record too, as a backup -- this only "
+        f"survives app restarts if the app is hosted somewhere with a persistent disk (not yet "
+        f"true on Streamlit Community Cloud).",
+        icon="💾",
+    )
+else:
+    st.error(
+        "**Nothing on this page is saved.** This design hasn't been saved yet -- go back to the "
+        "**Design a test** page and give it a name to enable saving here too. Until then, "
+        "refreshing, closing the tab, or the app restarting all lose the table below. Keep your "
+        "own record of cumulative numbers (e.g. in the Adobe/Target report you're pulling from) "
+        "and re-enter them here each time you check in on a test.",
+        icon="💾",
+    )
 
 st.caption(
     f"Comparing against: {inputs.metric_type} metric, baseline={inputs.baseline}, "
@@ -90,14 +105,35 @@ st.caption(
 )
 
 
+def _with_expected_day(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds/recomputes the read-only 'Expected day' column from each row's actual "Look"
+    value (not just position) -- recalculated every time rather than stored, so it stays
+    right even if rows were added, removed, or renumbered. No-op if there's no cadence yet."""
+    if cadence is None:
+        return df.drop(columns=["Expected day"], errors="ignore")
+    n_planned = len(design_result.t)
+
+    def expected_day(look_value):
+        if pd.isna(look_value):
+            return None
+        idx = int(look_value) - 1
+        if 0 <= idx < n_planned:
+            return round(design_result.t[idx] * total_days)
+        return None
+
+    df = df.copy()
+    df["Expected day"] = df["Look"].map(expected_day)
+    # Keep "Expected day" right after "Look" for a sensible reading order.
+    cols = ["Look", "Expected day"] + [c for c in df.columns if c not in ("Look", "Expected day")]
+    return df[cols]
+
+
 def _default_columns():
     # Pre-populate one row per PLANNED look (from the Design page), numbered to match the
     # "Look" column in that page's boundary table -- gives analysts a ready-made row to fill
     # in at each check-in instead of having to add rows one at a time as the test progresses.
     n = inputs.n_looks
     cols = {"Look": list(range(1, n + 1))}
-    if cadence is not None:
-        cols["Expected day"] = [round(t * total_days) for t in design_result.t[:n]]
     cols["Control N"] = [0] * n
     if inputs.metric_type == "binary":
         cols["Control conversions"] = [0] * n
@@ -183,18 +219,47 @@ def _column_config():
     return config
 
 
+def _strip_expected_day(df):
+    return None if df is None else df.drop(columns=["Expected day"], errors="ignore")
+
+
 default_df = _default_columns()
-# If a design change altered the expected columns (metric type or variant count), don't try to
-# reuse a stale table shape.
-prior = st.session_state.get("interim_df")
-if prior is None or set(prior.columns) != set(default_df.columns):
-    prior = default_df
 
-df = st.data_editor(prior, num_rows="dynamic", width="stretch", key="interim_editor",
-                     column_config=_column_config())
-st.session_state["interim_df"] = df
+# First time this design's id shows up in this session, check the database for anything
+# saved against it -- but only once, so it doesn't clobber in-progress (unsaved) edits on
+# every rerun afterwards.
+prior = None
+if design_id is not None and st.session_state.get("interim_loaded_for_id") != design_id:
+    db_df = store.load_interim_df(design_id, inputs.metric_type, variant_names)
+    st.session_state["interim_loaded_for_id"] = design_id
+    if db_df is not None:
+        prior = db_df
+        st.session_state["interim_df"] = prior
 
-if st.button("Analyze", type="primary"):
+if prior is None:
+    # If a design change altered the expected columns (metric type or variant count), don't try
+    # to reuse a stale table shape.
+    prior = _strip_expected_day(st.session_state.get("interim_df"))
+    if prior is None or set(prior.columns) != set(default_df.columns):
+        prior = default_df
+
+edited = st.data_editor(_with_expected_day(prior), num_rows="dynamic", width="stretch",
+                         key="interim_editor", column_config=_column_config())
+df = _strip_expected_day(edited)  # "Expected day" is read-only/derived -- keep it out of what
+st.session_state["interim_df"] = df  # gets stored, analyzed, or saved below.
+
+button_col, save_col = st.columns([1, 1])
+with button_col:
+    analyze_clicked = st.button("Analyze", type="primary")
+with save_col:
+    if design_id is not None:
+        if st.button("💾 Save entries"):
+            store.save_interim_df(design_id, df, inputs.metric_type, variant_names)
+            st.success("Saved.")
+    else:
+        st.caption("Save this design on the **Design a test** page to enable saving entries here.")
+
+if analyze_clicked:
     rows = df.dropna(how="all")
     looks = []
     try:

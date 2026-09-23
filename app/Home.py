@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `i
 import streamlit as st
 
 from app._theme import apply_brand, eyebrow
+from engine import store
 
 st.set_page_config(page_title="120F Sequential Testing", layout="wide")
 apply_brand()
@@ -55,10 +56,13 @@ with col2:
 
 st.markdown("---")
 st.markdown("### Before you start")
-st.error(
-    "**Nothing is saved between visits.** There's no database behind this tool yet -- a design "
-    "and any interim data you've entered both disappear on refresh or when the app restarts. "
-    "Keep your own record (e.g. the report you're pulling numbers from) and re-enter as needed.",
+st.info(
+    "**Saving is optional, and only sticks if this app is hosted somewhere with a persistent "
+    "disk.** Name and save a design on the Design page to keep it (and any interim data you "
+    "enter for it) across visits. On Streamlit Community Cloud specifically, that storage is "
+    "wiped on every redeploy and sleep/wake cycle -- durable persistence needs this hosted "
+    "somewhere with a real disk (e.g. the planned EC2 + systemd setup). An unsaved design still "
+    "works exactly as before: everything lives only in this browser tab until the app restarts.",
     icon="💾",
 )
 st.caption(
@@ -66,3 +70,18 @@ st.caption(
     "credentials for Adobe Analytics, so there's no automated pull yet. Numbers are typed "
     "in at the Monitor page from whatever report you're already pulling."
 )
+
+saved_designs = store.list_designs()
+if saved_designs:
+    st.markdown("### Recently saved designs")
+    st.dataframe(
+        [
+            {
+                "Name": d["name"], "Saved": d["created_at"][:10], "Metric": d["metric_type"],
+                "Variants": d["n_variants"], "Looks": d["n_looks"],
+            }
+            for d in saved_designs[:10]
+        ],
+        width="stretch", hide_index=True,
+    )
+    st.caption("Open **Design a test** and use **Load a saved design** to pick one up.")

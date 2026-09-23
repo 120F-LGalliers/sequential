@@ -185,9 +185,18 @@ of its own, since I don't yet know whether this goes in the same repo as
 - **Interim information fraction** is computed from `min(control_n,
   variant_n) / n_max_per_arm` per comparison — assumes roughly equal
   allocation between arms. Flag if traffic splits are meaningfully unequal.
-- **No persistence, by your instruction** — nothing saves between sessions;
-  users re-enter data each visit, and the app tells them so clearly (banners
-  on Home and Monitor).
+- **Persistence is now built (`engine/store.py`), but optional and
+  host-dependent.** A design can be named and saved on the Design page
+  (SQLite, one row per design + one row per look x arm for interim data);
+  saved designs show up in a picker there and in a "recently saved" list on
+  Home, and the Monitor page gets a "Save entries" button once a design is
+  saved. An unsaved design still behaves exactly as before — everything
+  lives only in that browser tab. Critically, this only survives app
+  restarts if the host gives the app a persistent disk — **not** true of
+  Streamlit Community Cloud (wiped on every redeploy and sleep/wake cycle),
+  which is where this has been tested so far. Point the `GSD_DB_PATH`
+  environment variable at wherever a persistent volume lives once this
+  moves to the planned EC2 + systemd host; see `store.py`'s docstring.
 
 ## What's NOT built yet
 
@@ -263,8 +272,10 @@ streamlit run app/Home.py           # launch the app locally
 2. **Framework default** — should GSTEF (AGILE) be the default framework
    with always-valid as an override, or does the analyst choose per test
    with no default? (Always-valid itself is still unbuilt either way.)
-3. **Persistence, when it's time** — even a lightweight SQLite file would
-   need to know whether your hosting (EC2 + systemd, per the conventions
-   above) keeps a persistent disk across deploys, which it likely does
-   (unlike, say, Streamlit Community Cloud) -- worth confirming when this
-   becomes a priority.
+3. **Persistence is built (`engine/store.py`) but not yet durable in
+   production** — it needs an actual persistent disk to survive restarts,
+   which means getting this off Streamlit Community Cloud and onto the
+   planned EC2 + systemd host (per the conventions above) before it's
+   trustworthy for real use. Confirm `GSD_DB_PATH` and back-up strategy
+   (it's a single file — copying it somewhere is the whole backup) once
+   that move happens.
