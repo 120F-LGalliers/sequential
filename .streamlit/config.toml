@@ -5,3 +5,4 @@ backgroundColor = "#FAF7F2"         # --ink-50 (warm off-white page bg, not pure
 secondaryBackgroundColor = "#F1ECE5" # --ink-100 (card/sidebar surface)
 textColor = "#1F1813"               # --ink-900
 font = "sans serif"
+baseFontSize = 20                   # scales all text + UI element sizing app-wide (default 16px)
