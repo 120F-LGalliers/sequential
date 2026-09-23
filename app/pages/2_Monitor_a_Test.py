@@ -54,6 +54,24 @@ st.caption(
     f"{inputs.n_variants} variant(s), max N/arm={design_result.n_max_per_arm:,}."
 )
 
+cadence = st.session_state.get("weekly_traffic", 0)
+with st.expander("Considerations before you check in / act on a result"):
+    st.markdown(
+        "- **Novelty and day-of-week effects.** Crossing the efficacy boundary is a statistically "
+        "valid stop, but if a test has only run a few days it may not yet cover a full weekly cycle "
+        "(or a novelty bump that's likely to fade). Where practical, let a test cover at least one "
+        "full business cycle (usually 1-2 weeks) before treating an early stop as final -- this is a "
+        "CRO practice on top of the design, not something the statistics require.\n"
+        "- **Roughly equal traffic allocation is assumed.** The information fraction below is "
+        "`min(control N, variant N) / max N per arm` per comparison -- if traffic has been split very "
+        "unevenly across arms (e.g. 90/10, or one arm paused for a while), the boundaries were "
+        "calibrated assuming closer to equal allocation, so treat the read with a bit more caution.\n"
+        "- **Check-in cadence.** Aim for roughly the number of looks this design was planned for "
+        "(shown above), spread across the test's expected duration, rather than an ad-hoc schedule -- "
+        + ("see the suggested cadence on the **Design a test** page." if not cadence
+           else "you entered expected traffic on the Design page, so a suggested cadence is shown there.")
+    )
+
 st.markdown("#### Enter cumulative data at each look")
 st.caption(
     "One row per check-in, in date order. Enter CUMULATIVE totals (not just this period's numbers) -- "
@@ -143,6 +161,12 @@ if st.button("Analyze", type="primary"):
             f"{name} naive point estimate (NOT bias-corrected for sequential monitoring -- see README): "
             f"{result.point_estimate:+.4f}  [{result.ci_low:+.4f}, {result.ci_high:+.4f}]"
         )
+        if result.decision in ("STOP_EFFICACY", "STOP_SIGNIFICANT_LOSS") and result.t_obs[-1] < 0.5:
+            st.caption(
+                f"⏳ This stop came early (information fraction {result.t_obs[-1]:.2f}) -- worth "
+                f"confirming the test has run long enough to cover a full weekly cycle before acting "
+                f"on it, in case novelty or day-of-week effects are inflating the read."
+            )
 
         fig, ax = plt.subplots(figsize=(8, 3.8))
         fig.patch.set_facecolor("#FAF7F2")

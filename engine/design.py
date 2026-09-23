@@ -199,6 +199,77 @@ def design(inputs: DesignInputs, grid_points: int = 300) -> DesignResult:
     )
 
 
+@dataclass
+class MonitoringCadence:
+    weekly_traffic_per_arm: float
+    projected_weeks_to_max_n: float
+    suggested_interval_days: float
+    suggested_interval_label: str
+    first_check_after_days: float
+    first_check_info_fraction: float
+
+
+def suggest_monitoring_cadence(result: DesignResult, weekly_traffic_total: float,
+                                min_info_fraction_first_look: float = 0.10) -> MonitoringCadence:
+    """Translate a design's max sample size + planned number of looks into a
+    suggested CALENDAR cadence, given the test's expected total weekly
+    traffic (split evenly across control + all variants -- assumes roughly
+    equal allocation, same assumption interim.py's info-fraction calc
+    makes).
+
+    This is a planning aid, not a statistical requirement: interim.py
+    recomputes boundaries at whatever information fraction is actually
+    observed at each look, so drifting from this schedule doesn't break
+    error control. It exists to answer the practical question "how often
+    should someone actually go and check the data", which genuinely does
+    depend on how fast a given test is accruing traffic -- there's no
+    single daily/weekly answer that fits both a high-traffic checkout flow
+    test and a low-traffic B2B lead-gen form test.
+
+    Two things worth knowing about the number this returns:
+    - It targets roughly `n_looks` check-ins spread evenly across the
+      projected test duration -- checking much MORE often than planned
+      doesn't inflate error, but it does erode the sample-size efficiency
+      the design was calibrated for (more chances to stop early than
+      assumed) and invites eyeballing trajectories between formal looks.
+    - `first_check_after_days` suggests skipping the very first sliver of
+      the test: with O'Brien-Fleming-style spending, a look before roughly
+      10% information is so conservative it essentially cannot stop for
+      efficacy or futility, so an earlier check is mostly noise and
+      wasted time.
+    """
+    if weekly_traffic_total <= 0:
+        raise ValueError("weekly_traffic_total must be positive")
+
+    n_arms = result.inputs.n_variants + 1  # + 1 for the shared control
+    weekly_traffic_per_arm = weekly_traffic_total / n_arms
+    projected_weeks = result.n_max_per_arm / weekly_traffic_per_arm
+    total_days = projected_weeks * 7
+
+    suggested_interval_days = total_days / result.inputs.n_looks
+    first_check_after_days = total_days * min_info_fraction_first_look
+
+    if suggested_interval_days < 1.5:
+        label = "daily"
+    elif suggested_interval_days < 4:
+        label = "every 2-3 days"
+    elif suggested_interval_days < 10:
+        label = "weekly"
+    elif suggested_interval_days < 20:
+        label = "every 2 weeks"
+    else:
+        label = "monthly"
+
+    return MonitoringCadence(
+        weekly_traffic_per_arm=weekly_traffic_per_arm,
+        projected_weeks_to_max_n=projected_weeks,
+        suggested_interval_days=suggested_interval_days,
+        suggested_interval_label=label,
+        first_check_after_days=first_check_after_days,
+        first_check_info_fraction=min_info_fraction_first_look,
+    )
+
+
 def summarize(result: DesignResult) -> str:
     inp = result.inputs
     lines = [

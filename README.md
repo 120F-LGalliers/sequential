@@ -1,4 +1,4 @@
-# Group sequential testing engine — v0.3 (core + Streamlit app)
+# Group sequential testing engine — v0.4 (core + Streamlit app + decision guidance)
 
 First-pass implementation of 120F's group sequential testing tool, following
 the AGILE-style method referenced in the project brief (analytics-toolkit.com
@@ -8,7 +8,11 @@ O'Brien-Fleming as the default spending function, non-binding futility.
 
 Now supports one-sided or two-sided testing and more than one variant vs. a
 shared control (Bonferroni-adjusted), both as user choices in the Design
-page — on top of the Streamlit app added last pass.
+page — on top of the Streamlit app added last pass. This pass adds a
+suggested check-in cadence calculator and, across the app, contextual
+guidance at the actual judgment calls an analyst has to make (baseline/MDE
+estimation, alpha/power/looks trade-offs, futility, novelty effects, and
+allocation assumptions) — see "Decision support added this pass" below.
 
 ## What's implemented
 
@@ -21,8 +25,14 @@ page — on top of the Streamlit app added last pass.
   Same class of algorithm used by reference software (R's gsDesign/rpact).
 - `design.py` — design-stage calculator: baseline/MDE/alpha/power/looks →
   boundary table, max sample size, inflation factor vs. fixed-horizon,
-  expected N under H0/H1. Binary and continuous metrics. **New**: `sides`
+  expected N under H0/H1. Binary and continuous metrics. `sides`
   ("one"/"two") and `n_variants` (Bonferroni-adjusted) as first-class inputs.
+  **New**: `suggest_monitoring_cadence()` — given expected weekly traffic,
+  projects how long the test will take to reach its max sample size and
+  suggests a check-in interval that spreads the planned `n_looks` evenly
+  across that duration, plus a "don't check before this many days" floor.
+  Purely a planning aid (see the Design page section below) — it doesn't
+  feed back into the boundaries themselves.
 - `interim.py` — monitoring-stage analysis. Given cumulative data at a look,
   computes the Z-statistic and RECOMPUTES boundaries for the actual observed
   information fraction (not just the pre-planned equally-spaced looks) —
@@ -37,17 +47,29 @@ page — on top of the Streamlit app added last pass.
 **Streamlit app (`app/`)**
 - `Home.py` — landing page, explains the two-step flow, flags validation
   status, and now has a clear "nothing is saved" banner.
-- `pages/1_Design_a_Test.py` — the design calculator as a form. **New**:
-  Sides (one/two) and Number of variants inputs; the boundary table/chart
-  show the lower ("significant loss") boundary when two-sided.
+- `pages/1_Design_a_Test.py` — the design calculator as a form. Sides
+  (one/two) and Number of variants inputs; the boundary table/chart show
+  the lower ("significant loss") boundary when two-sided. **New**: help
+  text on every input that involves real judgment (baseline/std-dev
+  estimation window, MDE as "smallest effect worth acting on" vs. sample-size
+  cost, alpha/power framed for CRO decision stakes, why more `n_looks`
+  is nearly free under O'Brien-Fleming, when to skip futility); an optional
+  "expected weekly traffic" input that, once a design is computed, surfaces
+  a suggested check-in cadence (projected weeks to max sample, suggested
+  interval, and a minimum-information floor before the first check).
 - `pages/2_Monitor_a_Test.py` — manual interim data entry, one row per look,
   with a column pair per variant when more than one is in the design →
   a decision + trajectory chart PER VARIANT. Manual entry is deliberate (no
   Adobe server-to-server credentials yet) — this page is where an automated
   "pull latest from Adobe" button would slot in later, without engine/
-  changing. **New**: a prominent "nothing on this page is saved" banner —
+  changing. A prominent "nothing on this page is saved" banner —
   there's no storage layer (see open questions), so re-entering data on
-  every visit is the expected workflow for now, not a bug.
+  every visit is the expected workflow for now, not a bug. **New**: a
+  "Considerations before you act on a result" expander (novelty/day-of-week
+  effects, the equal-allocation assumption behind the info-fraction calc,
+  cadence reminder) plus an inline nudge under any efficacy/significant-loss
+  stop that happened before 50% information, flagging it as an early result
+  worth a sanity check before acting on.
 - `.streamlit/config.toml` + `app/_theme.py` — light 120F brand pass (brand
   orange primary, warm off-white surfaces, Manrope/Archivo Black/JetBrains
   Mono type). Kept to the "quick/internal tool" end of the brand skill's
@@ -57,8 +79,57 @@ page — on top of the Streamlit app added last pass.
 Tested with Streamlit's `AppTest` harness, including a 3-variant two-sided
 scenario (one clear winner, one clear loser, one flat) that correctly
 produced STOP_EFFICACY / STOP_SIGNIFICANT_LOSS / STOP_FUTILITY respectively,
-one per variant, with no exceptions. Not the same as a human clicking
-through it in a real browser, so give it a real look before relying on it.
+one per variant, with no exceptions; and, this pass, the cadence calculator
+(traffic entered → correct projected duration/interval; left at 0 → skip
+message) and the early-stop novelty caution (confirmed it does NOT fire on
+a late/normal-timing stop, and DOES fire — with the right information
+fraction — on a stop engineered to happen before 50% information). Not the
+same as a human clicking through it in a real browser, so give it a real
+look before relying on it.
+
+## Decision support added this pass
+
+Going through every point in the tool where an analyst has to make a
+judgment call (not just fill in a number), rather than leaving it silent:
+
+- **Baseline / standard deviation** — help text on the Design page nudging
+  toward a representative pre-test window (4-6 weeks) rather than a single
+  day or a promo/holiday-skewed period, and (for continuous metrics) a
+  flag that outlier-heavy metrics inflate required sample size a lot and
+  may be worth capping or swapping for a more robust metric.
+- **MDE** — reframed as "the smallest effect that would change a decision",
+  with the quadratic sample-size cost of shrinking it spelled out, since an
+  unrealistically small MDE is probably the single most common way a test
+  design ends up needing far more traffic than the business actually has.
+- **Alpha / power** — framed around decision stakes (tighter alpha for
+  expensive/irreversible rollouts, higher power when missing a real winner
+  is costly) rather than presented as bare statistical knobs.
+- **Number of looks** — explains that, under O'Brien-Fleming spending, more
+  looks cost almost no extra sample size (the early boundaries are barely
+  reachable anyway) but buy more chances to stop early — so there's little
+  reason to under-plan this.
+- **Futility** — when it's worth it (frees up traffic on doomed tests) vs.
+  when to skip it (if there's a separate reason to always run to the full
+  planned sample).
+- **Check-in cadence** (the feature that prompted this pass) — translates
+  the abstract "n_looks spread across information fraction" into a
+  concrete calendar suggestion, given expected traffic: `n_max_per_arm`
+  and `n_looks` and traffic together imply both how long the test will
+  take and how often a check actually adds new information. Cadence
+  should scale with a test's own traffic, not follow one fixed daily/weekly
+  rule for every test — a high-traffic test and a low-traffic one on the
+  same `n_looks` plan want very different calendars. Also nudges against
+  checking well before ~10% information (O'Brien-Fleming makes an early
+  look nearly un-actionable) and against checking much more often than
+  planned (doesn't break error control, since boundaries are recomputed
+  at the actual observed information fraction either way, but erodes the
+  sample-size efficiency the design was calibrated for and invites
+  informal peeking between formal looks).
+- **Monitor-page cautions** — novelty/day-of-week effects (statistically
+  valid early stops can still be riding a transient effect — a business
+  consideration on top of the statistics, not one the design enforces),
+  and a restated reminder of the equal-traffic-allocation assumption
+  behind the observed information fraction.
 
 ## Conventions found in your existing Streamlit setup (internal-experf-dashboard)
 
