@@ -275,7 +275,7 @@ def summarize(result: DesignResult) -> str:
     lines = [
         f"Metric: {inp.metric_type}, baseline={inp.baseline}, "
         f"MDE={inp.mde} ({'relative' if inp.mde_is_relative else 'absolute'})",
-        f"Family-wise alpha={inp.alpha} ({inp.sides}-sided), power={inp.power}, "
+        f"False-positive budget (alpha)={inp.alpha} ({inp.sides}-sided), power={inp.power}, "
         f"looks={inp.n_looks}, spending={inp.spending_function}, variants={inp.n_variants}",
     ]
     if inp.n_variants > 1 or inp.sides == "two":
@@ -284,20 +284,21 @@ def summarize(result: DesignResult) -> str:
             f"per-tail alpha used in boundary calc = {inp.alpha_tail:.5f}"
         )
     lines += [
-        f"Fixed-horizon N per arm: {result.n_fixed_per_arm}",
-        f"Group sequential max N per arm: {result.n_max_per_arm}  (inflation factor {result.inflation_factor:.3f})",
-        f"Expected N per arm under H0 (no effect): {result.expected_n_under_h0:.0f}  "
-        f"({100 * result.expected_n_under_h0 / result.n_max_per_arm:.0f}% of max)",
-        f"Expected N per arm under H1 (true effect): {result.expected_n_under_h1:.0f}  "
-        f"({100 * result.expected_n_under_h1 / result.n_max_per_arm:.0f}% of max)",
+        f"Sample size per variant -- standard test (no interim looks): {result.n_fixed_per_arm}",
+        f"Sample size per variant -- sequential max (plan capacity for this): {result.n_max_per_arm}  "
+        f"(+{100 * (result.inflation_factor - 1):.1f}% vs standard test)",
+        f"Sample size per variant -- typical, no real effect: {result.expected_n_under_h0:.0f}  "
+        f"({100 * result.expected_n_under_h0 / result.n_max_per_arm:.0f}% of sequential max)",
+        f"Sample size per variant -- typical, real effect: {result.expected_n_under_h1:.0f}  "
+        f"({100 * result.expected_n_under_h1 / result.n_max_per_arm:.0f}% of sequential max)",
         "",
-        f"{'Look':>4} {'Info frac':>10} {'N/arm':>8} {'Lower (loss)':>13} {'Futility Z':>11} {'Efficacy Z':>11}",
+        f"{'Look':>4} {'% of max':>10} {'N/variant':>10} {'Lower (loss)':>13} {'Futility Z':>11} {'Efficacy Z':>11}",
     ]
     for k in range(inp.n_looks):
         fut_z = f"{result.futility.bounds[k]:.3f}" if result.futility is not None else "n/a"
         lower_z = f"{result.lower_efficacy.bounds[k]:.3f}" if result.lower_efficacy is not None else "n/a"
         lines.append(
-            f"{k + 1:>4} {result.t[k]:>10.3f} {int(round(result.t[k] * result.n_max_per_arm)):>8} "
+            f"{k + 1:>4} {100 * result.t[k]:>9.0f}% {int(round(result.t[k] * result.n_max_per_arm)):>10} "
             f"{lower_z:>13} {fut_z:>11} {result.efficacy.bounds[k]:>11.3f}"
         )
     return "\n".join(lines)
