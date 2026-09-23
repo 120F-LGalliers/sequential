@@ -50,8 +50,8 @@ st.error(
 st.caption(
     f"Comparing against: {inputs.metric_type} metric, baseline={inputs.baseline}, "
     f"MDE={inputs.mde:+.0%} ({'relative' if inputs.mde_is_relative else 'absolute'}), "
-    f"family-wise alpha={inputs.alpha} ({inputs.sides}-sided), power={inputs.power}, "
-    f"{inputs.n_variants} variant(s), max N/arm={design_result.n_max_per_arm:,}."
+    f"false-positive budget (alpha)={inputs.alpha} ({inputs.sides}-sided), power={inputs.power}, "
+    f"{inputs.n_variants} variant(s), max sample size per variant={design_result.n_max_per_arm:,}."
 )
 
 cadence = st.session_state.get("weekly_traffic", 0)
@@ -63,9 +63,10 @@ with st.expander("Considerations before you check in / act on a result"):
         "full business cycle (usually 1-2 weeks) before treating an early stop as final -- this is a "
         "CRO practice on top of the design, not something the statistics require.\n"
         "- **Roughly equal traffic allocation is assumed.** The information fraction below is "
-        "`min(control N, variant N) / max N per arm` per comparison -- if traffic has been split very "
-        "unevenly across arms (e.g. 90/10, or one arm paused for a while), the boundaries were "
-        "calibrated assuming closer to equal allocation, so treat the read with a bit more caution.\n"
+        "`min(control N, variant N) / max sample size per variant` per comparison -- if traffic has "
+        "been split very unevenly across variants (e.g. 90/10, or one variant paused for a while), "
+        "the boundaries were calibrated assuming closer to equal allocation, so treat the read with a "
+        "bit more caution.\n"
         "- **Check-in cadence.** Aim for roughly the number of looks this design was planned for "
         "(shown above), spread across the test's expected duration, rather than an ad-hoc schedule -- "
         + ("see the suggested cadence on the **Design a test** page." if not cadence
