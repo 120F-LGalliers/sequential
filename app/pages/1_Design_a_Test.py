@@ -50,9 +50,10 @@ if saved_designs:
             st.success(f"Loaded '{name}'.")
             st.rerun()
 
-with st.form("design_form"):
-    c1, c2 = st.columns(2)
-    with c1:
+row1a, row1b = st.columns(2)
+with row1a:
+    with st.container(border=True):
+        st.markdown("**Metric & effect size**")
         metric_type = st.radio("Metric type", ["binary", "continuous"], horizontal=True,
                                 help="Binary = conversion rate. Continuous = a per-user mean, e.g. revenue or AOV.")
         baseline = st.number_input(
@@ -80,30 +81,21 @@ with st.form("design_form"):
                  "sample size, so an unrealistically small MDE can make a test take months to reach a "
                  "read. If traffic is limited, it's usually better to widen the MDE to something still "
                  "commercially meaningful than to run an underpowered test.")
-        sides = st.radio(
-            "Sides", ["one", "two"], horizontal=True,
-            format_func=lambda s: "One-sided (does the variant beat control?)" if s == "one"
-            else "Two-sided (also flag a significant loss)",
-            help="One-sided is the standard CRO framing. Two-sided also gives you a boundary for "
-                 "declaring a variant significantly WORSE than control, at the cost of a slightly "
-                 "bigger required sample size for the same confidence on the 'beats' question.",
-        )
-        n_variants = st.number_input(
-            "Number of variants vs. control", min_value=1, max_value=6, value=1, step=1,
-            help="More than 1 variant splits your alpha budget across comparisons (Bonferroni "
-                 "correction) so the overall false-positive rate across all of them stays at your "
-                 "chosen alpha -- each comparison gets a stricter effective alpha, and the required "
-                 "sample size per variant goes up accordingly.",
-        )
-    with c2:
-        alpha = st.number_input("Overall false-positive budget (alpha)", min_value=0.001,
-                                 max_value=0.5, value=0.05,
-                                 help="With more than one variant, this is split across all of them "
-                                      "(Bonferroni) -- it's the TOTAL chance of any false positive "
-                                      "across the whole test, not per comparison. 0.05 is the standard "
-                                      "default; consider tightening it (e.g. 0.01-0.02) for a decision "
-                                      "that's expensive or hard to reverse if wrong, such as a "
-                                      "site-wide rollout with real engineering cost.")
+with row1b:
+    with st.container(border=True):
+        st.markdown("**Statistical parameters**")
+        confidence_pct = st.number_input(
+            "Confidence level -- statistical significance (%)", min_value=50.0, max_value=99.9,
+            value=95.0, step=0.1,
+            help="The '95%/99% confidence' language most CRO tools (Optimizely, VWO, Adobe Target) "
+                 "report. This is the TOTAL false-positive budget across the whole test, not per "
+                 "comparison -- with more than one variant it's split across all of them (Bonferroni), "
+                 "so each individual comparison ends up held to a slightly stricter, higher confidence "
+                 "bar than the headline number (see the note below the Compute button's results). 95% "
+                 "is the standard default; consider 99% for a decision that's expensive or hard to "
+                 "reverse if wrong, such as a site-wide rollout with real engineering cost.")
+        alpha = round(1 - confidence_pct / 100, 6)
+        st.caption(f"= significance level (alpha) of **{alpha:.3g}**")
         power = st.number_input("Target power (1 - beta)", min_value=0.5, max_value=0.999, value=0.80,
                                  help="80% is the standard default -- a 1-in-5 chance of missing a real "
                                       "effect of exactly this MDE. Consider 90% when the cost of missing "
@@ -135,16 +127,37 @@ with st.form("design_form"):
                 "Futility spending function", list(SPENDING_FUNCTIONS.keys()),
                 index=list(SPENDING_FUNCTIONS.keys()).index("obrien_fleming"))
 
-    st.markdown("##### Optional: check-in cadence")
-    weekly_traffic = st.number_input(
-        "Expected total weekly traffic into this test (control + all variants combined)",
-        min_value=0, value=0, step=100,
-        help="Used only to suggest how often to actually check in on this test once it's live -- it "
-             "doesn't affect the design itself. Leave at 0 to skip. Assumes roughly equal traffic "
-             "allocation across variants, same assumption the Monitor page's info-fraction calc makes.",
-    )
+row2a, row2b = st.columns(2)
+with row2a:
+    with st.container(border=True):
+        st.markdown("**Test structure**")
+        sides = st.radio(
+            "Sides", ["one", "two"], horizontal=True,
+            format_func=lambda s: "One-sided" if s == "one" else "Two-sided",
+            help="One-sided (standard CRO framing): does the variant beat control? Two-sided: also gives "
+                 "you a boundary for declaring a variant significantly WORSE than control, at the cost of "
+                 "a slightly bigger required sample size for the same confidence on the 'beats' question.",
+        )
+        n_variants = st.number_input(
+            "Number of variants vs. control", min_value=1, max_value=6, value=1, step=1,
+            help="More than 1 variant splits your alpha budget across comparisons (Bonferroni "
+                 "correction) so the overall false-positive rate across all of them stays at your "
+                 "chosen alpha -- each comparison gets a stricter effective alpha, and the required "
+                 "sample size per variant goes up accordingly.",
+        )
+with row2b:
+    with st.container(border=True):
+        st.markdown("**Check-in cadence** &nbsp; _(optional)_")
+        weekly_traffic = st.number_input(
+            "Expected total weekly traffic into this test (control + all variants combined)",
+            min_value=0, value=0, step=100,
+            help="Used only to suggest how often to actually check in on this test once it's live -- it "
+                 "doesn't affect the design itself. Leave at 0 to skip. Assumes roughly equal traffic "
+                 "allocation across variants, same assumption the Monitor page's info-fraction calc makes.",
+        )
 
-    submitted = st.form_submit_button("Compute design", type="primary")
+st.write("")
+submitted = st.button("Compute design", type="primary", width="stretch")
 
 if submitted:
     inputs = DesignInputs(
@@ -180,15 +193,13 @@ if "design_result" in st.session_state:
 
     st.markdown("### Result")
 
-    save_col, name_col = st.columns([1, 3])
+    name_col, save_col = st.columns([3, 1], vertical_alignment="bottom")
     with name_col:
         default_name = st.session_state.get("design_name", "")
         design_name = st.text_input("Name this design (to save it)", value=default_name,
-                                     placeholder="e.g. Avis -- homepage hero CTA",
-                                     label_visibility="collapsed" if default_name else "visible")
+                                     placeholder="e.g. Avis -- homepage hero CTA")
     with save_col:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("💾 Save design"):
+        if st.button("💾 Save design", width="stretch"):
             if not design_name.strip():
                 st.warning("Give the design a name first.")
             else:
@@ -212,9 +223,10 @@ if "design_result" in st.session_state:
         )
     if inp.n_variants > 1 or inp.sides == "two":
         st.caption(
-            f"Per-comparison alpha after Bonferroni ({inp.n_variants} variant(s)): "
-            f"**{inp.alpha_per_comparison:.4f}**"
-            + (f"  |  per-tail alpha used in the boundary calc (two-sided): **{inp.alpha_tail:.4f}**"
+            f"Per-comparison confidence after Bonferroni ({inp.n_variants} variant(s)): "
+            f"**{100 * (1 - inp.alpha_per_comparison):.2f}%** (alpha = {inp.alpha_per_comparison:.4f})"
+            + (f"  |  per-tail confidence used in the boundary calc (two-sided): "
+               f"**{100 * (1 - inp.alpha_tail):.2f}%** (alpha = {inp.alpha_tail:.4f})"
                if inp.sides == "two" else "")
         )
 
