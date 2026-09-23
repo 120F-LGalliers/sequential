@@ -75,26 +75,94 @@ with st.expander("Considerations before you check in / act on a result"):
 
 st.markdown("#### Enter cumulative data at each look")
 st.caption(
-    "One row per check-in, in date order. Enter CUMULATIVE totals (not just this period's numbers) -- "
-    "e.g. row 3 should include everyone counted in rows 1 and 2 as well."
+    f"Pre-filled with {inputs.n_looks} rows, one per planned look from the Design page -- add or "
+    f"remove rows below if your actual check-ins end up different. Enter CUMULATIVE totals (not just "
+    f"this period's numbers) -- e.g. Look 3's row should include everyone counted in Looks 1 and 2 "
+    f"as well."
 )
 
 
 def _default_columns():
-    cols = {"Label": ["Look 1"], "Control N": [0]}
+    # Pre-populate one row per PLANNED look (from the Design page), numbered to match the
+    # "Look" column in that page's boundary table -- gives analysts a ready-made row to fill
+    # in at each check-in instead of having to add rows one at a time as the test progresses.
+    n = inputs.n_looks
+    cols = {"Look": list(range(1, n + 1)), "Control N": [0] * n}
     if inputs.metric_type == "binary":
-        cols["Control conversions"] = [0]
+        cols["Control conversions"] = [0] * n
     else:
-        cols["Control mean"] = [0.0]
-        cols["Control SD"] = [0.0]
+        cols["Control mean"] = [0.0] * n
+        cols["Control SD"] = [0.0] * n
     for name in variant_names:
-        cols[f"{name} N"] = [0]
+        cols[f"{name} N"] = [0] * n
         if inputs.metric_type == "binary":
-            cols[f"{name} conversions"] = [0]
+            cols[f"{name} conversions"] = [0] * n
         else:
-            cols[f"{name} mean"] = [0.0]
-            cols[f"{name} SD"] = [0.0]
+            cols[f"{name} mean"] = [0.0] * n
+            cols[f"{name} SD"] = [0.0] * n
     return pd.DataFrame(cols)
+
+
+def _column_config():
+    """Friendlier display labels + hover help for the data editor, WITHOUT renaming the
+    underlying column keys the rest of this page reads by name (row["Control N"], etc.) --
+    keeps the rename low-risk and independent of the analysis code below."""
+    config = {
+        "Look": st.column_config.NumberColumn(
+            "Look",
+            help="Matches the 'Look' numbering on the Design page's boundary table -- rows are "
+                 "pre-filled 1 to N for the planned looks. Doesn't have to match exactly if a real "
+                 "check-in gets skipped or an extra one is added; it's for your own reference and "
+                 "doesn't affect the analysis, which uses the actual sample sizes you enter, not this "
+                 "number.",
+            format="%d", min_value=1, step=1,
+        ),
+        "Control N": st.column_config.NumberColumn(
+            "Control — sample size (cumulative)",
+            help="Total number of users/sessions seen in CONTROL so far, from the start of the test "
+                 "up to this check-in (not just this period's count).",
+            min_value=0, step=1,
+        ),
+    }
+    if inputs.metric_type == "binary":
+        config["Control conversions"] = st.column_config.NumberColumn(
+            "Control — conversions (cumulative)",
+            help="Total number of CONVERTING users/sessions in control so far, up to this check-in.",
+            min_value=0, step=1,
+        )
+    else:
+        config["Control mean"] = st.column_config.NumberColumn(
+            "Control — mean value (cumulative)",
+            help="Cumulative mean of the metric (e.g. revenue, AOV) for control, up to this check-in.",
+        )
+        config["Control SD"] = st.column_config.NumberColumn(
+            "Control — std. deviation (cumulative)",
+            help="Cumulative standard deviation of the metric for control, up to this check-in.",
+            min_value=0.0,
+        )
+    for name in variant_names:
+        config[f"{name} N"] = st.column_config.NumberColumn(
+            f"{name} — sample size (cumulative)",
+            help=f"Total number of users/sessions seen in {name} so far, up to this check-in.",
+            min_value=0, step=1,
+        )
+        if inputs.metric_type == "binary":
+            config[f"{name} conversions"] = st.column_config.NumberColumn(
+                f"{name} — conversions (cumulative)",
+                help=f"Total number of CONVERTING users/sessions in {name} so far, up to this check-in.",
+                min_value=0, step=1,
+            )
+        else:
+            config[f"{name} mean"] = st.column_config.NumberColumn(
+                f"{name} — mean value (cumulative)",
+                help=f"Cumulative mean of the metric for {name}, up to this check-in.",
+            )
+            config[f"{name} SD"] = st.column_config.NumberColumn(
+                f"{name} — std. deviation (cumulative)",
+                help=f"Cumulative standard deviation of the metric for {name}, up to this check-in.",
+                min_value=0.0,
+            )
+    return config
 
 
 default_df = _default_columns()
@@ -104,7 +172,8 @@ prior = st.session_state.get("interim_df")
 if prior is None or set(prior.columns) != set(default_df.columns):
     prior = default_df
 
-df = st.data_editor(prior, num_rows="dynamic", width="stretch", key="interim_editor")
+df = st.data_editor(prior, num_rows="dynamic", width="stretch", key="interim_editor",
+                     column_config=_column_config())
 st.session_state["interim_df"] = df
 
 if st.button("Analyze", type="primary"):
@@ -125,7 +194,7 @@ if st.button("Analyze", type="primary"):
                 else:
                     variants[name] = ArmStats(n=float(row[f"{name} N"]), mean=float(row[f"{name} mean"]),
                                                sd=float(row[f"{name} SD"]))
-            looks.append(Look(control=control, variants=variants, label=str(row.get("Label", ""))))
+            looks.append(Look(control=control, variants=variants, label=str(row.get("Look", ""))))
     except (KeyError, ValueError) as e:
         st.error(f"Couldn't read the data table: {e}")
         st.stop()
