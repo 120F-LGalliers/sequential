@@ -22,6 +22,7 @@ import pandas as pd
 import streamlit as st
 
 from app._theme import apply_brand, eyebrow
+from engine.design import suggest_monitoring_cadence
 from engine.interim import ArmStats, Look, analyze
 
 st.set_page_config(page_title="Monitor a test -- 120F Sequential Testing", layout="wide")
@@ -54,7 +55,11 @@ st.caption(
     f"{inputs.n_variants} variant(s), max sample size per variant={design_result.n_max_per_arm:,}."
 )
 
-cadence = st.session_state.get("weekly_traffic", 0)
+weekly_traffic = st.session_state.get("weekly_traffic", 0)
+cadence = (suggest_monitoring_cadence(design_result, weekly_traffic_total=weekly_traffic)
+           if weekly_traffic and weekly_traffic > 0 else None)
+total_days = cadence.projected_weeks_to_max_n * 7 if cadence is not None else None
+
 with st.expander("Considerations before you check in / act on a result"):
     st.markdown(
         "- **Novelty and day-of-week effects.** Crossing the efficacy boundary is a statistically "
@@ -69,7 +74,7 @@ with st.expander("Considerations before you check in / act on a result"):
         "bit more caution.\n"
         "- **Check-in cadence.** Aim for roughly the number of looks this design was planned for "
         "(shown above), spread across the test's expected duration, rather than an ad-hoc schedule -- "
-        + ("see the suggested cadence on the **Design a test** page." if not cadence
+        + ("see the suggested cadence on the **Design a test** page." if cadence is None
            else "you entered expected traffic on the Design page, so a suggested cadence is shown there.")
     )
 
@@ -79,6 +84,9 @@ st.caption(
     f"remove rows below if your actual check-ins end up different. Enter CUMULATIVE totals (not just "
     f"this period's numbers) -- e.g. Look 3's row should include everyone counted in Looks 1 and 2 "
     f"as well."
+    + ("" if cadence is None else " The **Expected day** column shows the projected calendar day for "
+       "each look, from the Design page's traffic estimate -- a planning guide for when the next "
+       "check-in is due, not a requirement.")
 )
 
 
@@ -87,7 +95,10 @@ def _default_columns():
     # "Look" column in that page's boundary table -- gives analysts a ready-made row to fill
     # in at each check-in instead of having to add rows one at a time as the test progresses.
     n = inputs.n_looks
-    cols = {"Look": list(range(1, n + 1)), "Control N": [0] * n}
+    cols = {"Look": list(range(1, n + 1))}
+    if cadence is not None:
+        cols["Expected day"] = [round(t * total_days) for t in design_result.t[:n]]
+    cols["Control N"] = [0] * n
     if inputs.metric_type == "binary":
         cols["Control conversions"] = [0] * n
     else:
@@ -116,6 +127,13 @@ def _column_config():
                  "doesn't affect the analysis, which uses the actual sample sizes you enter, not this "
                  "number.",
             format="%d", min_value=1, step=1,
+        ),
+        "Expected day": st.column_config.NumberColumn(
+            "Expected day",
+            help="Projected calendar day (from launch) for this look, based on the expected weekly "
+                 "traffic entered on the Design page. Read-only -- a planning estimate, not a fixed "
+                 "schedule, so it's fine to check in earlier or later than shown.",
+            format="%d", disabled=True,
         ),
         "Control N": st.column_config.NumberColumn(
             "Control — sample size (cumulative)",
