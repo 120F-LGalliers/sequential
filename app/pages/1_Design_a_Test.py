@@ -154,7 +154,7 @@ if "design_result" in st.session_state:
         "that easier to see at a glance than the numbers alone."
     )
 
-    fig, ax = plt.subplots(figsize=(9, 2.6))
+    fig, ax = plt.subplots(figsize=(9, 3.2))
     fig.patch.set_facecolor("#FAF7F2")
     ax.set_facecolor("#FAF7F2")
     points = [
@@ -165,19 +165,20 @@ if "design_result" in st.session_state:
     ]
     points.sort(key=lambda p: p[0])
     track_max = result.n_max_per_arm
-    ax.barh([0], [track_max], height=0.05, color="#F1ECE5", zorder=1)
+    ax.barh([0], [track_max], height=0.04, color="#F1ECE5", zorder=1)
     for i, (value, label, color) in enumerate(points):
         above = i % 2 == 0
-        y_stem, y_text = (0.42, 0.55) if above else (-0.42, -0.55)
+        y_stem, y_text = (0.5, 0.85) if above else (-0.5, -0.85)
         va = "bottom" if above else "top"
-        ax.plot([value, value], [0, y_stem], color=color, linewidth=1.5, zorder=2)
-        ax.scatter([value], [0], color=color, s=60, zorder=3, edgecolor="white", linewidth=1)
+        ax.plot([value, value], [0, y_stem], color=color, linewidth=1.3, zorder=2)
+        ax.scatter([value], [0], color=color, s=50, zorder=3, edgecolor="white", linewidth=1)
         ax.annotate(f"{label}\n{value:,.0f}", xy=(value, y_text), ha="center", va=va,
-                    fontsize=8.5, color="#14100D", linespacing=1.4)
-    ax.set_ylim(-1, 1)
+                    fontsize=7.5, color="#14100D", linespacing=1.3)
+    ax.set_ylim(-1.7, 1.7)
     ax.set_yticks([])
-    ax.set_xlim(0, track_max * 1.1)
-    ax.set_xlabel("Sample size per variant (control needs roughly the same)")
+    ax.set_xlim(0, track_max * 1.12)
+    ax.set_xlabel("Sample size per variant", fontsize=9)
+    ax.tick_params(axis="x", labelsize=8)
     for spine in ["top", "right", "left"]:
         ax.spines[spine].set_visible(False)
     fig.tight_layout()
@@ -221,58 +222,75 @@ if "design_result" in st.session_state:
     table["Efficacy Z (win)"] = [f"{z:.3f}" for z in result.efficacy.bounds]
     st.dataframe(table, width="stretch", hide_index=True)
 
-    st.markdown("#### Boundary chart")
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    fig.patch.set_facecolor("#FAF7F2")
-    ax.set_facecolor("#FAF7F2")
-    ax.plot(result.t, result.efficacy.bounds, color="#D16A0F", marker="o", linewidth=2, label="Efficacy boundary (win)")
-    if result.lower_efficacy is not None:
-        ax.plot(result.t, result.lower_efficacy.bounds, color="#C2381E", marker="o", linewidth=2,
-                label="Lower boundary (significant loss)")
-    if result.futility is not None:
-        ax.plot(result.t, result.futility.bounds, color="#6C5F54", marker="o", linewidth=2,
-                linestyle="--", label="Futility boundary")
-        ax.fill_between(result.t, result.futility.bounds, result.efficacy.bounds,
-                         color="#F1ECE5", alpha=0.6, label="Continue region")
-    ax.axhline(0, color="#C9C0B7", linewidth=1)
-    ax.set_xlabel("Information fraction")
-    ax.set_ylabel("Z statistic")
-    title = "Stopping boundaries"
-    if inp.n_variants > 1:
-        title += f"  ({inp.n_variants} variants, Bonferroni-adjusted)"
-    ax.set_title(title, fontsize=13, fontweight="bold", color="#14100D", loc="left")
-    for spine in ["top", "right"]:
-        ax.spines[spine].set_visible(False)
-    ax.legend(frameon=False)
-    st.pyplot(fig)
+    weekly_traffic = st.session_state.get("weekly_traffic", 0)
+    cadence = (suggest_monitoring_cadence(result, weekly_traffic_total=weekly_traffic)
+               if weekly_traffic and weekly_traffic > 0 else None)
+    total_days = cadence.projected_weeks_to_max_n * 7 if cadence is not None else None
+
+    col_cadence, col_chart = st.columns([1.1, 0.9])
+
+    with col_cadence:
+        st.markdown("#### Suggested check-in cadence")
+        if cadence is not None:
+            cc1, cc2 = st.columns(2)
+            cc1.metric("Time to max sample", f"{cadence.projected_weeks_to_max_n:.1f} wks")
+            cc2.metric("Check-in interval", cadence.suggested_interval_label,
+                       help=f"~every {cadence.suggested_interval_days:.1f} days, spreading "
+                            f"{inp.n_looks} looks evenly across the projected duration.")
+            st.caption(
+                f"A planning aid, not a statistical requirement -- boundaries are recomputed for "
+                f"whatever information fraction you actually observe, so drifting from this doesn't "
+                f"break error control. Skip the first check until at least "
+                f"{cadence.first_check_after_days:.0f} days in (~"
+                f"{100 * cadence.first_check_info_fraction:.0f}% information -- earlier is mostly "
+                f"noise with O'Brien-Fleming spending), and try not to check much more often than "
+                f"shown, since more looks than planned erodes the sample-size efficiency the design "
+                f"was calibrated for. The chart on the right marks each planned check-in day."
+            )
+        else:
+            st.caption(
+                "Enter your expected weekly traffic above (before computing the design) to get a "
+                "suggested check-in cadence, and see planned check-in days marked on the boundary "
+                "chart."
+            )
+
+    with col_chart:
+        st.markdown("#### Boundary chart")
+        fig, ax = plt.subplots(figsize=(6.2, 3.8))
+        fig.patch.set_facecolor("#FAF7F2")
+        ax.set_facecolor("#FAF7F2")
+        ax.plot(result.t, result.efficacy.bounds, color="#D16A0F", marker="o", markersize=5,
+                linewidth=1.8, label="Efficacy (win)")
+        if result.lower_efficacy is not None:
+            ax.plot(result.t, result.lower_efficacy.bounds, color="#C2381E", marker="o", markersize=5,
+                    linewidth=1.8, label="Lower (loss)")
+        if result.futility is not None:
+            ax.plot(result.t, result.futility.bounds, color="#6C5F54", marker="o", markersize=5,
+                    linewidth=1.8, linestyle="--", label="Futility")
+            ax.fill_between(result.t, result.futility.bounds, result.efficacy.bounds,
+                             color="#F1ECE5", alpha=0.6, label="Continue")
+        ax.axhline(0, color="#C9C0B7", linewidth=1)
+
+        if total_days is not None:
+            ax.set_xticks(result.t)
+            ax.set_xticklabels([f"{t:.2f}\nDay {round(t * total_days)}" for t in result.t], fontsize=6.5)
+            ax.set_xlabel("Information fraction  /  projected check-in day", fontsize=8)
+        else:
+            ax.set_xlabel("Information fraction", fontsize=9)
+            ax.tick_params(axis="x", labelsize=8)
+        ax.set_ylabel("Z statistic", fontsize=9)
+        ax.tick_params(axis="y", labelsize=8)
+        title = "Stopping boundaries"
+        if inp.n_variants > 1:
+            title += f" ({inp.n_variants} variants)"
+        ax.set_title(title, fontsize=10.5, fontweight="bold", color="#14100D", loc="left")
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+        ax.legend(frameon=False, fontsize=7)
+        fig.tight_layout()
+        st.pyplot(fig)
 
     st.info("This design is now available on the **Monitor a test** page to compare live results against.")
-
-    weekly_traffic = st.session_state.get("weekly_traffic", 0)
-    if weekly_traffic and weekly_traffic > 0:
-        cadence = suggest_monitoring_cadence(result, weekly_traffic_total=weekly_traffic)
-        st.markdown("#### Suggested check-in cadence")
-        cc1, cc2 = st.columns(2)
-        cc1.metric("Projected time to max sample", f"{cadence.projected_weeks_to_max_n:.1f} weeks")
-        cc2.metric("Suggested check-in interval", cadence.suggested_interval_label,
-                   help=f"~every {cadence.suggested_interval_days:.1f} days, spreading "
-                        f"{inp.n_looks} looks evenly across the projected duration.")
-        st.caption(
-            f"This is a planning aid, not a statistical requirement -- boundaries are recomputed for "
-            f"whatever information fraction you actually observe, so drifting from this schedule "
-            f"doesn't break error control. Two things worth following anyway: skip the first check "
-            f"until at least {cadence.first_check_after_days:.0f} days in (~"
-            f"{100 * cadence.first_check_info_fraction:.0f}% information) -- with O'Brien-Fleming "
-            f"spending, anything before that is too conservative to stop on and mostly just noise -- "
-            f"and try not to check MUCH more often than this, since more looks than planned erodes the "
-            f"sample-size efficiency the design was calibrated for and invites reading too much into "
-            f"an informal peek between formal ones."
-        )
-    else:
-        st.caption(
-            "Enter your expected weekly traffic above (before computing the design) to get a suggested "
-            "check-in cadence for this test."
-        )
 
     with st.expander("Full text summary"):
         st.code(summarize(result))
